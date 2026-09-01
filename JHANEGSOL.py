@@ -1,3 +1,4 @@
+
 import streamlit as st
 import pandas as pd
 from supabase import create_client, Client
@@ -10,7 +11,7 @@ st.set_page_config(
 
 # Configuración de conexión a Supabase
 SUPABASE_URL = "https://cwpispkqdphhiibaqnkb.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cGlzcGtxZHBoaGlpYmFxbmtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MTAxNDIsImV4cCI6MjA5NjE4NjE0Mn0.oXDl9yU5BoYdH1WpVbJWHyVs8w6Lu5F9AxUxJnFl8CE"  # Pega aquí tu clave anon real
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cGlzcGtxZHBoaGlpYmFxbmtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MTAxNDIsImV4cCI6MjA5NjE4NjE0Mn0.oXDl9yU5BoYdH1WpVbJWHyVs8w6Lu5F9AxUxJnFl8CE"  
 
 @st.cache_resource
 def init_supabase() -> Client:
@@ -25,7 +26,7 @@ except Exception as e:
 # Menú lateral
 opcion = st.sidebar.selectbox(
     "Navegación",
-    ["📊 Dashboard General", "📦 Maestro de Productos", "📄 Órdenes de Compra", "📥 Recepción Facturas", "💰 Ventas"]
+    ["📊 Dashboard General", "📦 Maestro de Productos", "📄 Órdenes de Compra", "📥 Recepción Facturas (Compras)", "💰 Ventas"]
 )
 
 # ---------------------------------------------------------
@@ -54,10 +55,10 @@ if opcion == "📊 Dashboard General":
     with c_left:
         st.subheader("🔥 Productos Más Vendidos")
         try:
-            res_v = supabase.table("detalle_ventas").select("cantidad, productos(nombre)").execute().data
+            res_v = supabase.table("detalle_ventas").select("cantidad, productos_maestro(nombre)").execute().data
             if res_v:
                 df_v = pd.DataFrame(res_v)
-                df_v["Producto"] = df_v["productos"].apply(lambda x: x.get("nombre") if isinstance(x, dict) else "N/A")
+                df_v["Producto"] = df_v["productos_maestro"].apply(lambda x: x.get("nombre") if isinstance(x, dict) else "N/A")
                 top_ventas = df_v.groupby("Producto")["cantidad"].sum().reset_index()
                 top_ventas = top_ventas.sort_values(by="cantidad", ascending=False).head(5)
                 st.dataframe(top_ventas, use_container_width=True, hide_index=True)
@@ -205,12 +206,69 @@ elif opcion == "📄 Órdenes de Compra":
         st.error(f"Error al consultar órdenes de compra: {e}")
 
 # ---------------------------------------------------------
-# 4. RECEPCIÓN FACTURAS
+# 4. RECEPCIÓN FACTURAS (COMPRAS)
 # ---------------------------------------------------------
-elif opcion == "📥 Recepción Facturas":
-    st.title("📥 Recepción de Productos por N° Factura")
+elif opcion == "📥 Recepción Facturas (Compras)":
+    st.title("📥 Recepción de Productos y Compras")
     st.divider()
 
+    try:
+        prods_data = supabase.table("productos_maestro").select("codigo_producto, nombre, cantidad_stock").execute().data
+        provs_data = supabase.table("proveedores").select("id_proveedor, nombre_empresa").execute().data
+        ocs_data = supabase.table("ordenes_compra").select("id_orden, numero_orden").execute().data
+
+        dict_prods_compra = {f"{p['codigo_producto']} - {p['nombre']}": (p['codigo_producto'], p.get('cantidad_stock', 0)) for p in prods_data} if prods_data else {}
+        dict_provs = {p["nombre_empresa"]: p["id_proveedor"] for p in provs_data} if provs_data else {}
+        dict_ocs = {str(o["numero_orden"]): o["id_orden"] for o in ocs_data} if ocs_data else {}
+    except Exception as e:
+        st.error(f"Error al cargar catalogos para compras: {e}")
+
+    with st.expander("➕ Registrar Nueva Recepción / Compra", expanded=False):
+        with st.form("form_compra", clear_on_submit=True):
+            col_c1, col_c2 = st.columns(2)
+
+            with col_c1:
+                nro_factura = st.text_input("Número de Factura")
+                fecha_fact = st.date_input("Fecha de Factura")
+                prod_compra_sel = st.selectbox("Producto Recibido", list(dict_prods_compra.keys()) if dict_prods_compra else ["N/A"])
+                prov_sel = st.selectbox("Proveedor", list(dict_provs.keys()) if dict_provs else ["N/A"])
+
+            with col_c2:
+                cant_ingresada = st.number_input("Cantidad Ingresada", min_value=1, step=1, value=1)
+                precio_compra = st.number_input("Precio de Compra Unitario ($)", min_value=0.0, step=0.5, value=10.0)
+                oc_sel = st.selectbox("Órden de Compra Asociada", list(dict_ocs.keys()) if dict_ocs else ["N/A"])
+
+            guardar_compra = st.form_submit_button("📥 Registrar Recepción e Incrementar Stock")
+
+            if guardar_compra:
+                if not nro_factura or prod_compra_sel == "N/A":
+                    st.warning("El número de factura y el producto son obligatorios.")
+                else:
+                    cod_prod, stock_actual = dict_prods_compra[prod_compra_sel]
+                    payload_compra = {
+                        "numero_factura": nro_factura,
+                        "fecha_factura": str(fecha_fact),
+                        "cantidad_ingresada": cant_ingresada,
+                        "precio_compra": precio_compra,
+                        "codigo_producto": cod_prod,
+                        "id_proveedor": dict_provs.get(prov_sel),
+                        "id_orden": dict_ocs.get(oc_sel)
+                    }
+
+                    try:
+                        # Insertar compra
+                        supabase.table("recep_productos_factura").insert(payload_compra).execute()
+                        # Sumar al stock del producto
+                        nuevo_stock = stock_actual + cant_ingresada
+                        supabase.table("productos_maestro").update({"cantidad_stock": nuevo_stock}).eq("codigo_producto", cod_prod).execute()
+
+                        st.success(f"¡Recepción registrada! Stock de {cod_prod} actualizado a {nuevo_stock} unidades.")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"Error al registrar compra: {err}")
+
+    # Tabla general de recepciones
+    st.subheader("📋 Registro Histórico de Compras / Recepciones")
     try:
         res = supabase.table("recep_productos_factura").select("""
             numero_factura, fecha_factura, cantidad_ingresada, precio_compra,
@@ -232,10 +290,76 @@ elif opcion == "💰 Ventas":
     st.divider()
 
     try:
+        prods_data_v = supabase.table("productos_maestro").select("codigo_producto, nombre, precio_venta, cantidad_stock").execute().data
+        clientes_data = supabase.table("clientes").select("id_cliente, nombre").execute().data
+
+        dict_prods_venta = {f"{p['codigo_producto']} - {p['nombre']}": (p['codigo_producto'], float(p.get('precio_venta', 0.0)), int(p.get('cantidad_stock', 0))) for p in prods_data_v} if prods_data_v else {}
+        dict_clientes = {c["nombre"]: c["id_cliente"] for c in clientes_data} if clientes_data else {}
+    except Exception as e:
+        st.error(f"Error al cargar catalogos para ventas: {e}")
+
+    with st.expander("➕ Registrar Nueva Venta", expanded=False):
+        with st.form("form_venta", clear_on_submit=True):
+            col_v1, col_v2 = st.columns(2)
+
+            with col_v1:
+                nro_factura_v = st.text_input("Número de Factura / Boleta")
+                fecha_v = st.date_input("Fecha de Venta")
+                cliente_sel = st.selectbox("Cliente", list(dict_clientes.keys()) if dict_clientes else ["N/A"])
+                metodo_pago = st.selectbox("Método de Pago", ["Efectivo", "Tarjeta de Crédito/Débito", "Transferencia", "Crédito"])
+
+            with col_v2:
+                prod_venta_sel = st.selectbox("Producto a Vender", list(dict_prods_venta.keys()) if dict_prods_venta else ["N/A"])
+                cant_vender = st.number_input("Cantidad a Vender", min_value=1, step=1, value=1)
+
+            guardar_venta = st.form_submit_button("💰 Registrar Venta y Descontar Stock")
+
+            if guardar_venta:
+                if not nro_factura_v or prod_venta_sel == "N/A":
+                    st.warning("El número de factura y el producto son obligatorios.")
+                else:
+                    cod_prod, precio_u, stock_actual = dict_prods_venta[prod_venta_sel]
+
+                    if cant_vender > stock_actual:
+                        st.error(f"Stock insuficiente. Solo quedan {stock_actual} unidades disponibles de este producto.")
+                    else:
+                        try:
+                            # 1. Insertar cabecera de venta
+                            res_venta = supabase.table("ventas").insert({
+                                "numero_factura": nro_factura_v,
+                                "fecha": str(fecha_v),
+                                "id_cliente": dict_clientes.get(cliente_sel),
+                                "metodo_pago": metodo_pago
+                            }).execute().data
+
+                            id_venta_gen = res_venta[0]["id_venta"] if res_venta else None
+                            subtotal = cant_vender * precio_u
+
+                            # 2. Insertar detalle de venta
+                            supabase.table("detalle_ventas").insert({
+                                "id_venta": id_venta_gen,
+                                "codigo_producto": cod_prod,
+                                "cantidad": cant_vender,
+                                "precio_unitario": precio_u,
+                                "subtotal": subtotal
+                            }).execute()
+
+                            # 3. Descontar del stock maestro
+                            nuevo_stock = stock_actual - cant_vender
+                            supabase.table("productos_maestro").update({"cantidad_stock": nuevo_stock}).eq("codigo_producto", cod_prod).execute()
+
+                            st.success(f"¡Venta registrada exitosamente! Nuevo stock de {cod_prod}: {nuevo_stock} unidades.")
+                            st.rerun()
+                        except Exception as err:
+                            st.error(f"Error al registrar la venta: {err}")
+
+    # Tabla general de ventas
+    st.subheader("📋 Registro Histórico de Ventas")
+    try:
         res = supabase.table("detalle_ventas").select("""
             cantidad, precio_unitario, subtotal,
             ventas(numero_factura, fecha, metodo_pago, clientes(nombre)),
-            productos(codigo_producto, nombre)
+            productos_maestro(codigo_producto, nombre)
         """).execute().data
         if res:
             st.dataframe(res, use_container_width=True)
