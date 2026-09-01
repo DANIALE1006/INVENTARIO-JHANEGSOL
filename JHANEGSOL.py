@@ -13,7 +13,6 @@ st.set_page_config(
 SUPABASE_URL = "https://cwpispkqdphhiibaqnkb.supabase.co"
 SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cGlzcGtxZHBoaGlpYmFxbmtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MTAxNDIsImV4cCI6MjA5NjE4NjE0Mn0.oXDl9yU5BoYdH1WpVbJWHyVs8w6Lu5F9AxUxJnFl8CE"  
 
-
 @st.cache_resource
 def init_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -64,12 +63,17 @@ if opcion == "📊 Dashboard General":
     with c_left:
         st.subheader("🔥 Productos Más Vendidos")
         try:
-            res_v = supabase.table("detalle_ventas").select("codigo_producto, cantidad").execute().data
+            # Traer todas las columnas para evitar error 42703 por nombres de columna desiguales
+            res_v = supabase.table("detalle_ventas").select("*").execute().data
             if res_v:
                 df_v = pd.DataFrame(res_v)
-                top_ventas = df_v.groupby("codigo_producto")["cantidad"].sum().reset_index()
-                top_ventas = top_ventas.sort_values(by="cantidad", ascending=False).head(5)
-                st.dataframe(top_ventas, use_container_width=True, hide_index=True)
+                col_prod = "codigo_producto" if "codigo_producto" in df_v.columns else ("id_producto" if "id_producto" in df_v.columns else None)
+                if col_prod and "cantidad" in df_v.columns:
+                    top_ventas = df_v.groupby(col_prod)["cantidad"].sum().reset_index()
+                    top_ventas = top_ventas.sort_values(by="cantidad", ascending=False).head(5)
+                    st.dataframe(top_ventas, use_container_width=True, hide_index=True)
+                else:
+                    st.dataframe(df_v.head(5), use_container_width=True, hide_index=True)
             else:
                 st.info("Sin registro de ventas.")
         except Exception as e:
@@ -366,13 +370,21 @@ elif opcion == "💰 Ventas":
                             id_venta_gen = res_venta[0]["id_venta"] if res_venta else None
                             subtotal = cant_vender * precio_u
 
-                            supabase.table("detalle_ventas").insert({
+                            # Insertar detalle adaptando la llave según tu base de datos
+                            det_payload = {
                                 "id_venta": id_venta_gen,
-                                "codigo_producto": cod_prod,
                                 "cantidad": cant_vender,
                                 "precio_unitario": precio_u,
                                 "subtotal": subtotal
-                            }).execute()
+                            }
+                            # Intenta primero con codigo_producto, si falla el schema usa id_producto
+                            try:
+                                det_payload["codigo_producto"] = cod_prod
+                                supabase.table("detalle_ventas").insert(det_payload).execute()
+                            except Exception:
+                                det_payload.pop("codigo_producto", None)
+                                det_payload["id_producto"] = cod_prod
+                                supabase.table("detalle_ventas").insert(det_payload).execute()
 
                             nuevo_stock = stock_actual - cant_vender
                             supabase.table("productos_maestro").update({"cantidad_stock": nuevo_stock}).eq("codigo_producto", cod_prod).execute()
@@ -384,7 +396,7 @@ elif opcion == "💰 Ventas":
 
     st.subheader("📋 Tabla General de Ventas")
     try:
-        res_det = supabase.table("detalle_ventas").select("id_venta, codigo_producto, cantidad, precio_unitario, subtotal").execute().data
+        res_det = supabase.table("detalle_ventas").select("*").execute().data
         res_ventas = supabase.table("ventas").select("id_venta, numero_factura, fecha, metodo_pago, tipo_comprobante, tipo_operacion").execute().data
 
         if res_det:
