@@ -1,7 +1,8 @@
 import streamlit as st
+import pandas as pd
 from supabase import create_client, Client
 
-# Configuración de la página en Streamlit
+# Configuración de la página
 st.set_page_config(
     page_title="Sistema de Control de Inventarios (JHANEGSOL)",
     layout="wide"
@@ -9,7 +10,8 @@ st.set_page_config(
 
 # Configuración de conexión a Supabase
 SUPABASE_URL = "https://cwpispkqdphhiibaqnkb.supabase.co"
-SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cGlzcGtxZHBoaGlpYmFxbmtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MTAxNDIsImV4cCI6MjA5NjE4NjE0Mn0.oXDl9yU5BoYdH1WpVbJWHyVs8w6Lu5F9AxUxJnFl8CE"
+SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImN3cGlzcGtxZHBoaGlpYmFxbmtiIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA2MTAxNDIsImV4cCI6MjA5NjE4NjE0Mn0.oXDl9yU5BoYdH1WpVbJWHyVs8w6Lu5F9AxUxJnFl8CE"  # Pega aquí tu clave anon real
+
 @st.cache_resource
 def init_supabase() -> Client:
     return create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -98,13 +100,12 @@ if opcion == "📊 Dashboard General":
             st.error(f"Error al evaluar proveedores: {e}")
 
 # ---------------------------------------------------------
-# 2. MAESTRO DE PRODUCTOS (CON FORMULARIO CREAR Y EDITAR)
+# 2. MAESTRO DE PRODUCTOS
 # ---------------------------------------------------------
 elif opcion == "📦 Maestro de Productos":
     st.title("📦 Catálogo Maestro de Productos")
     st.divider()
 
-    # Cargar datos auxiliares para los desplegables
     try:
         marcas_data = supabase.table("marcas").select("id_marca, nombre_marca").execute().data
         modelos_data = supabase.table("modelos").select("id_modelo, nombre_modelo").execute().data
@@ -114,12 +115,9 @@ elif opcion == "📦 Maestro de Productos":
         dict_modelos = {m["nombre_modelo"]: m["id_modelo"] for m in modelos_data} if modelos_data else {}
         dict_tipos = {t["nombre_tipo"]: t["id_tipo"] for t in tipos_data} if tipos_data else {}
     except Exception as e:
-        st.error(f"Error al obtener catalogos de apoyo: {e}")
+        st.error(f"Error al obtener catálogos de apoyo: {e}")
 
-    # Formulario desplegable
     with st.expander("➕ Registrar / Editar Producto", expanded=False):
-        
-        # Consultar productos existentes para opción de edición
         prods_existentes = supabase.table("productos_maestro").select("codigo_producto, nombre").execute().data
         dict_prods = {f"{p['codigo_producto']} - {p['nombre']}": p["codigo_producto"] for p in prods_existentes} if prods_existentes else {}
         
@@ -175,7 +173,6 @@ elif opcion == "📦 Maestro de Productos":
                     except Exception as err:
                         st.error(f"Error al guardar en Supabase: {err}")
 
-    # Tabla de Productos Actuales
     try:
         res = supabase.table("productos_maestro").select("""
             codigo_producto, nombre, unidad_medida, precio_venta, cantidad_stock,
@@ -239,3 +236,10 @@ elif opcion == "💰 Ventas":
             cantidad, precio_unitario, subtotal,
             ventas(numero_factura, fecha, metodo_pago, clientes(nombre)),
             productos(codigo_producto, nombre)
+        """).execute().data
+        if res:
+            st.dataframe(res, use_container_width=True)
+        else:
+            st.info("No hay ventas registradas.")
+    except Exception as e:
+        st.error(f"Error al consultar ventas: {e}")
