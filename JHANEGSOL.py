@@ -63,7 +63,6 @@ if opcion == "📊 Dashboard General":
     with c_left:
         st.subheader("🔥 Productos Más Vendidos")
         try:
-            # Traer todas las columnas para evitar error 42703 por nombres de columna desiguales
             res_v = supabase.table("detalle_ventas").select("*").execute().data
             if res_v:
                 df_v = pd.DataFrame(res_v)
@@ -358,26 +357,31 @@ elif opcion == "💰 Ventas":
                         st.error(f"Stock insuficiente. Quedan {stock_actual} unidades.")
                     else:
                         try:
-                            res_venta = supabase.table("ventas").insert({
+                            # Payload de la cabecera de venta
+                            venta_payload = {
                                 "numero_factura": nro_factura_v,
                                 "fecha": str(fecha_v),
                                 "id_cliente": dict_clientes.get(cliente_sel),
                                 "metodo_pago": metodo_pago,
-                                "tipo_comprobante": tipo_comprobante,
-                                "tipo_operacion": tipo_operacion
-                            }).execute().data
+                            }
+                            
+                            # Intenta agregar los tipos si la base de datos ya los soporta
+                            try:
+                                venta_payload_ext = {**venta_payload, "tipo_comprobante": tipo_comprobante, "tipo_operacion": tipo_operacion}
+                                res_venta = supabase.table("ventas").insert(venta_payload_ext).execute().data
+                            except Exception:
+                                res_venta = supabase.table("ventas").insert(venta_payload).execute().data
 
                             id_venta_gen = res_venta[0]["id_venta"] if res_venta else None
                             subtotal = cant_vender * precio_u
 
-                            # Insertar detalle adaptando la llave según tu base de datos
+                            # Insertar detalle adaptando la llave según el esquema
                             det_payload = {
                                 "id_venta": id_venta_gen,
                                 "cantidad": cant_vender,
                                 "precio_unitario": precio_u,
                                 "subtotal": subtotal
                             }
-                            # Intenta primero con codigo_producto, si falla el schema usa id_producto
                             try:
                                 det_payload["codigo_producto"] = cod_prod
                                 supabase.table("detalle_ventas").insert(det_payload).execute()
@@ -396,8 +400,9 @@ elif opcion == "💰 Ventas":
 
     st.subheader("📋 Tabla General de Ventas")
     try:
+        # Selección segura con * para evitar pedir columnas inexistentes explícitamente
         res_det = supabase.table("detalle_ventas").select("*").execute().data
-        res_ventas = supabase.table("ventas").select("id_venta, numero_factura, fecha, metodo_pago, tipo_comprobante, tipo_operacion").execute().data
+        res_ventas = supabase.table("ventas").select("*").execute().data
 
         if res_det:
             df_det = pd.DataFrame(res_det)
