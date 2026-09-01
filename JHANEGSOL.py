@@ -27,13 +27,12 @@ opcion = st.sidebar.selectbox(
 )
 
 # ---------------------------------------------------------
-# 1. DASHBOARD GENERAL (CON ANALÍTICAS SOLICITADAS)
+# 1. DASHBOARD GENERAL
 # ---------------------------------------------------------
 if opcion == "📊 Dashboard General":
     st.title("📊 Dashboard General - JHANEGSOL")
     st.divider()
 
-    # Métricas Globales
     try:
         res_prod = supabase.table("productos_maestro").select("cantidad_stock, precio_venta").execute().data
         total_prods = len(res_prod)
@@ -50,7 +49,6 @@ if opcion == "📊 Dashboard General":
     st.divider()
     c_left, c_mid, c_right = st.columns(3)
 
-    # A. Productos más vendidos
     with c_left:
         st.subheader("🔥 Productos Más Vendidos")
         try:
@@ -66,7 +64,6 @@ if opcion == "📊 Dashboard General":
         except Exception as e:
             st.error(f"Error al procesar ventas: {e}")
 
-    # B. Productos más comprados
     with c_mid:
         st.subheader("📦 Productos Más Comprados")
         try:
@@ -83,7 +80,6 @@ if opcion == "📊 Dashboard General":
         except Exception as e:
             st.error(f"Error al procesar recepciones: {e}")
 
-    # C. Proveedores con mejores precios (menor precio unitario promedio)
     with c_right:
         st.subheader("🏷️ Mejores Precios de Proveedores")
         try:
@@ -97,17 +93,89 @@ if opcion == "📊 Dashboard General":
                 best_prov["Precio Promedio"] = best_prov["Precio Promedio"].map("${:,.2f}".format)
                 st.dataframe(best_prov, use_container_width=True, hide_index=True)
             else:
-                st.info("Sin registros de compras a proveedores.")
+                st.info("Sin registros de compras.")
         except Exception as e:
             st.error(f"Error al evaluar proveedores: {e}")
 
 # ---------------------------------------------------------
-# 2. MAESTRO DE PRODUCTOS
+# 2. MAESTRO DE PRODUCTOS (CON FORMULARIO CREAR Y EDITAR)
 # ---------------------------------------------------------
 elif opcion == "📦 Maestro de Productos":
     st.title("📦 Catálogo Maestro de Productos")
     st.divider()
 
+    # Cargar datos auxiliares para los desplegables
+    try:
+        marcas_data = supabase.table("marcas").select("id_marca, nombre_marca").execute().data
+        modelos_data = supabase.table("modelos").select("id_modelo, nombre_modelo").execute().data
+        tipos_data = supabase.table("tipos_producto").select("id_tipo, nombre_tipo").execute().data
+
+        dict_marcas = {m["nombre_marca"]: m["id_marca"] for m in marcas_data} if marcas_data else {}
+        dict_modelos = {m["nombre_modelo"]: m["id_modelo"] for m in modelos_data} if modelos_data else {}
+        dict_tipos = {t["nombre_tipo"]: t["id_tipo"] for t in tipos_data} if tipos_data else {}
+    except Exception as e:
+        st.error(f"Error al obtener catalogos de apoyo: {e}")
+
+    # Formulario desplegable
+    with st.expander("➕ Registrar / Editar Producto", expanded=False):
+        
+        # Consultar productos existentes para opción de edición
+        prods_existentes = supabase.table("productos_maestro").select("codigo_producto, nombre").execute().data
+        dict_prods = {f"{p['codigo_producto']} - {p['nombre']}": p["codigo_producto"] for p in prods_existentes} if prods_existentes else {}
+        
+        modo = st.radio("Acción:", ["Crear Nuevo Producto", "Editar Producto Existente"], horizontal=True)
+
+        if modo == "Editar Producto Existente" and dict_prods:
+            prod_sel = st.selectbox("Selecciona el Producto a editar", list(dict_prods.keys()))
+            cod_editar = dict_prods[prod_sel]
+            datos_prod = supabase.table("productos_maestro").select("*").eq("codigo_producto", cod_editar).execute().data[0]
+        else:
+            datos_prod = {}
+
+        with st.form("form_producto", clear_on_submit=False):
+            col_a, col_b = st.columns(2)
+
+            with col_a:
+                codigo = st.text_input("Código de Producto", value=datos_prod.get("codigo_producto", ""), disabled=(modo == "Editar Producto Existente"))
+                nombre = st.text_input("Nombre del Producto", value=datos_prod.get("nombre", ""))
+                unidad = st.text_input("Unidad de Medida (ej. UND, KG)", value=datos_prod.get("unidad_medida", "UND"))
+                marca_sel = st.selectbox("Marca", list(dict_marcas.keys()) if dict_marcas else ["N/A"])
+
+            with col_b:
+                precio = st.number_input("Precio de Venta ($)", min_value=0.0, value=float(datos_prod.get("precio_venta", 0.0)), step=0.5)
+                stock = st.number_input("Cantidad en Stock", min_value=0, value=int(datos_prod.get("cantidad_stock", 0)), step=1)
+                modelo_sel = st.selectbox("Modelo", list(dict_modelos.keys()) if dict_modelos else ["N/A"])
+                tipo_sel = st.selectbox("Tipo de Producto", list(dict_tipos.keys()) if dict_tipos else ["N/A"])
+
+            guardar = st.form_submit_button("💾 Guardar en Supabase")
+
+            if guardar:
+                if not codigo or not nombre:
+                    st.warning("El código y el nombre son campos obligatorios.")
+                else:
+                    payload = {
+                        "codigo_producto": codigo,
+                        "nombre": nombre,
+                        "unidad_medida": unidad,
+                        "precio_venta": precio,
+                        "cantidad_stock": stock,
+                        "id_marca": dict_marcas.get(marca_sel),
+                        "id_modelo": dict_modelos.get(modelo_sel),
+                        "id_tipo": dict_tipos.get(tipo_sel)
+                    }
+
+                    try:
+                        if modo == "Crear Nuevo Producto":
+                            supabase.table("productos_maestro").insert(payload).execute()
+                            st.success(f"¡Producto '{nombre}' creado exitosamente!")
+                        else:
+                            supabase.table("productos_maestro").update(payload).eq("codigo_producto", codigo).execute()
+                            st.success(f"¡Producto '{nombre}' actualizado exitosamente!")
+                        st.rerun()
+                    except Exception as err:
+                        st.error(f"Error al guardar en Supabase: {err}")
+
+    # Tabla de Productos Actuales
     try:
         res = supabase.table("productos_maestro").select("""
             codigo_producto, nombre, unidad_medida, precio_venta, cantidad_stock,
@@ -160,7 +228,7 @@ elif opcion == "📥 Recepción Facturas":
         st.error(f"Error al consultar recepciones: {e}")
 
 # ---------------------------------------------------------
-# 5. VENTAS (RELACIÓN CORREGIDA A 'productos')
+# 5. VENTAS
 # ---------------------------------------------------------
 elif opcion == "💰 Ventas":
     st.title("💰 Salidas y Ventas a Clientes")
@@ -171,11 +239,3 @@ elif opcion == "💰 Ventas":
             cantidad, precio_unitario, subtotal,
             ventas(numero_factura, fecha, metodo_pago, clientes(nombre)),
             productos(codigo_producto, nombre)
-        """).execute().data
-        if res:
-            st.dataframe(res, use_container_width=True)
-        else:
-            st.info("No hay ventas registradas.")
-    except Exception as e:
-        st.error(f"Error al consultar ventas: {e}")
-
